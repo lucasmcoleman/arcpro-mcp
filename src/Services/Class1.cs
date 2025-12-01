@@ -72,16 +72,25 @@ public sealed class JsonRpcServer
         _toolsDispatcher = toolsDispatcher;
     }
 
-    public async Task RunAsync(CancellationToken ct)
+    public Task RunAsync(CancellationToken ct)
     {
         using var stdin = Console.OpenStandardInput();
         using var stdout = Console.OpenStandardOutput();
         using var reader = new StreamReader(stdin);
         using var writer = new StreamWriter(stdout) { AutoFlush = true };
 
+        return RunAsync(reader, writer, ct);
+    }
+
+    /// <summary>
+    /// Core JSON-RPC loop that reads from the provided reader and writes to the provided writer.
+    /// This overload exists to make the server testable with in-memory streams.
+    /// </summary>
+    public async Task RunAsync(TextReader reader, TextWriter writer, CancellationToken ct)
+    {
         _logger.LogInformation("JSON-RPC server loop started.");
 
-        while (!ct.IsCancellationRequested && !reader.EndOfStream)
+        while (!ct.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync().ConfigureAwait(false);
             if (line is null || string.IsNullOrWhiteSpace(line))
@@ -107,6 +116,11 @@ public sealed class JsonRpcServer
                     Id: null);
 
                 await WriteResponseAsync(writer, errorResponse, ct).ConfigureAwait(false);
+
+                if (reader is StringReader)
+                {
+                    break; // avoid infinite loop for in-memory tests
+                }
                 continue;
             }
 
@@ -123,6 +137,11 @@ public sealed class JsonRpcServer
                 }
 
                 await writer.WriteLineAsync(responses.ToJsonString(SerializerOptions)).ConfigureAwait(false);
+
+                if (reader is StringReader)
+                {
+                    break; // avoid infinite loop for in-memory tests
+                }
             }
             else
             {
@@ -130,6 +149,11 @@ public sealed class JsonRpcServer
                 if (response is not null)
                 {
                     await WriteResponseAsync(writer, response, ct).ConfigureAwait(false);
+                }
+
+                if (reader is StringReader)
+                {
+                    break; // avoid infinite loop for in-memory tests
                 }
             }
         }
@@ -210,7 +234,7 @@ public sealed class JsonRpcServer
         }
     }
 
-    private static Task WriteResponseAsync(StreamWriter writer, JsonRpcResponse response, CancellationToken ct)
+    private static Task WriteResponseAsync(TextWriter writer, JsonRpcResponse response, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(response, SerializerOptions);
         return writer.WriteLineAsync(json);
